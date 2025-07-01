@@ -16,10 +16,10 @@ export async function GeminiProcessor(data: any): Promise<LlmResponseStruct> {
       is_stream: false,
 
       prompt: '',
-      api_key: '',
+      api_key: process.env.GEMINI_API_KEY || 'AIzaSyBd1fyIyu6gINkNIsIDHibq-8H2BVWYCWc',
 
-      chat_model: 'gemini-2.0-pro',
-      vision_model: 'gemini-pro-vision',
+      chat_model: 'gemini-2.5-flash',
+      vision_model: 'gemini-2.5-flash',
       speech_model: '',
 
       chat_history: [],

@@ -801,6 +801,34 @@ async function CallAndExecuteTool(selected_server:any, server_credentials:any,to
             args.username = server_credentials[selected_server]?.username || "";
             args.password = server_credentials[selected_server]?.password || "";
             break;
+        case "ASSET_MANAGEMENT":
+            args["__credentials__"] = {
+                "cloudName": server_credentials[selected_server]?.cloudName || "",
+                "apiKey": server_credentials[selected_server]?.apiKey || "",
+                "apiSecret": server_credentials[selected_server]?.apiSecret || ""
+            };
+            break;
+        case "ANALYSIS":
+            args["__credentials__"] = {
+                "cloudName": server_credentials[selected_server]?.cloudName || "",
+                "apiKey": server_credentials[selected_server]?.apiKey || "",
+                "apiSecret": server_credentials[selected_server]?.apiSecret || ""
+            };
+            break;
+        case "ENVIRONMENT_CONFIG":
+            args["__credentials__"] = {
+                "cloudName": server_credentials[selected_server]?.cloudName || "",
+                "apiKey": server_credentials[selected_server]?.apiKey || "",
+                "apiSecret": server_credentials[selected_server]?.apiSecret || ""
+            };
+            break;
+        case "STRUCTURED_METADATA":
+            args["__credentials__"] = {
+                "cloudName": server_credentials[selected_server]?.cloudName || "",
+                "apiKey": server_credentials[selected_server]?.apiKey || "",
+                "apiSecret": server_credentials[selected_server]?.apiSecret || ""
+            };
+            break;
         case "ZOOMMCP":
             args["__credentials__"] = {
                 "account_id": server_credentials[selected_server]?.account_id || "",
