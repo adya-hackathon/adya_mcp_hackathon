@@ -904,6 +904,21 @@ async function CallAndExecuteTool(selected_server:any, server_credentials:any,to
                 "appSecret": server_credentials[selected_server]?.appSecret || "",
             }
             break;
+        case "MCP-JOOMLA":
+            args.base_url = server_credentials[selected_server]?.base_url || "";
+            args.bearer_token = server_credentials[selected_server]?.bearer_token || "";
+            break;
+        case "MOBILE-MCP-MAIN":
+            // Mobile MCP typically doesn't require credentials for basic operations
+            // Add any mobile-specific configuration if needed
+            break;
+        case "EVENTBRITE-MCP-MAIN":
+            // Eventbrite requires API key
+            args.api_key = server_credentials[selected_server]?.api_key || "";
+            break;
+        case "FEDORA-MCP-SERVER":
+            // Fedora MCP server typically doesn't require credentials for basic operations
+            break;
         default:
             break;
     }

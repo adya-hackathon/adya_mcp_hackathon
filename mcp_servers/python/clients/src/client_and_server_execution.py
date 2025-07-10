@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 # Assuming these are your imported modules/classes for MCP clients and Azure LLM calls
 from src.llm.azureopenai import azure_openai_processor  # your async LLM call function
 from src.llm.openai import openai_processor  # your async LLM call function
-from src.server_connection import MCPServers  # MCP clients dict or class with call_tool method
+from src.server_connection import MCPServers, initialize_all_mcp  # MCP clients dict or class with call_tool method
 from src.llm.gemini import gemini_processor 
 
 
@@ -28,7 +28,12 @@ class ClientAndServerExecutionResponse:
 
 async def client_and_server_execution(payload: Dict[str, Any], streaming_callback: Optional[Any] = None) -> ClientAndServerExecutionResponse:
     try:
+        print(f"DEBUG: Starting client_and_server_execution with payload: {payload.get('selected_servers', [])}", flush=True)
         result = ClientAndServerExecutionResponse()
+
+        # Initialize MCP servers if not already done
+        if not MCPServers:
+            await initialize_all_mcp(None)
 
         selected_server_credentials = payload.get("selected_server_credentials")
         client_details = payload.get("client_details", {})
@@ -55,14 +60,24 @@ async def client_and_server_execution(payload: Dict[str, Any], streaming_callbac
             })
 
         tools_getting_agent_prompt = f"""
-        You are an {selected_server} AI assistant that analyzes user requests and determines the require tool calls from available tools.
+        You are an {selected_server} AI assistant that analyzes user requests and determines the required tool calls from available tools.
         Available tools: {json.dumps(tool_call_details_arr)}
-        Analyze each request to determine if it matches available tool capabilities or needs clarification.
-        Return TRUE for tool calls when the request clearly maps to available tools without checking the required parameters.
-        Return FALSE when the request is ambiguous, missing parameters, or requires more information.
+
+        IMPORTANT: Be liberal in tool selection. If a user request can be accomplished with available tools, return TRUE and identify the tools.
+
+        Examples:
+        - "Get all categories from Joomla" -> TRUE, get_joomla_categories
+        - "Write a file called test.txt" -> TRUE, write_file
+        - "List directory contents" -> TRUE, list_directory
+        - "Run ls command" -> TRUE, run_command
+
+        Return TRUE for tool calls when the request can be accomplished with available tools.
+        Return FALSE only when no available tools can handle the request.
+
         Output format:
             <function_call>TRUE/FALSE</function_call>
             <selected_tools>function_name1,function_name2 or "none"</selected_tools>
+
         Use exact tool names from available tools. List all relevant tools ordered by relevance.
         """
 
@@ -286,7 +301,9 @@ async def client_and_server_execution(payload: Dict[str, Any], streaming_callbac
                                     "Action": "NOTIFICATION"
                                 }))
 
+                            print(f"DEBUG: About to execute tool '{tool_name}' on server '{selected_server}'", flush=True)
                             tool_call_result = await call_and_execute_tool(selected_server, selected_server_credentials, tool_name, args)
+                            print(f"DEBUG: Tool execution completed, result: {tool_call_result}", flush=True)
 
                             if streaming_callback and streaming_callback.get("is_stream"):
                                 await streaming_callback["streamCallbacks"].on_data(json.dumps({
@@ -588,7 +605,14 @@ async def client_and_server_execution(payload: Dict[str, Any], streaming_callbac
                     if matching_tool:
                         final_tool_calls.append(matching_tool)
 
-                client_details["prompt"] = temp_prompt
+                # Update prompt to instruct Gemini to call the tools using function calls
+                # Note: For MCP-JOOMLA tools, credentials are automatically injected
+                if selected_server == "MCP-JOOMLA":
+                    new_prompt = f"{temp_prompt}. You must call the selected tools using the function call format. For MCP-JOOMLA tools, the base_url and bearer_token are automatically provided - call the tools without these parameters."
+                    client_details["prompt"] = new_prompt
+                    print(f"DEBUG - MCP-JOOMLA prompt updated: {new_prompt}")
+                else:
+                    client_details["prompt"] = f"{temp_prompt}. You must call the selected tools using the function call format."
                 client_details["tools"] = final_tool_calls
              
 
@@ -618,21 +642,58 @@ async def client_and_server_execution(payload: Dict[str, Any], streaming_callbac
                     result.Data["llm_responses_arr"].append(response.Data.get("final_llm_response"))
 
                     if response.Data.get("output_type") == "text":
-                        result.Data["messages"].extend(response.Data.get("messages", []))
-                        result.Data["output_type"] = response.Data.get("output_type", "")
-                        result.Error = response.Error
-                        result.Status = response.Status
+                        # Check if the text response contains tool_code format
+                        message_content = response.Data.get("messages", [{}])[0] if response.Data.get("messages") else ""
+                        tool_parse_result = extract_data_from_response(message_content)
 
-                        for message in response.Data.get("messages", []):
-                            if streaming_callback and streaming_callback.get("is_stream"):
-                                await streaming_callback["streamCallbacks"].on_data(json.dumps({
-                                    "Data": message,
-                                    "Error": None,
-                                    "Status": True,
-                                    "StreamingStatus": "IN-PROGRESS",
-                                    "Action": "MESSAGE"
-                                }))
-                        return result
+                        if tool_parse_result["isFunctionCall"] and tool_parse_result["selectedTools"]:
+                            # Handle tool_code format execution
+                            for tool_name in tool_parse_result["selectedTools"]:
+                                if streaming_callback and streaming_callback.get("is_stream"):
+                                    await streaming_callback["streamCallbacks"].on_data(json.dumps({
+                                        "Data": f"{selected_server} MCP server {tool_name} call initiated",
+                                        "Error": None,
+                                        "Status": True,
+                                        "StreamingStatus": "IN-PROGRESS",
+                                        "Action": "NOTIFICATION"
+                                    }))
+
+                                tool_call_result = await call_and_execute_tool(selected_server, selected_server_credentials, tool_name, {})
+                                result.Data["executed_tool_calls"].append({
+                                    "tool_name": tool_name,
+                                    "args": {},
+                                    "result": tool_call_result
+                                })
+
+                                if streaming_callback and streaming_callback.get("is_stream"):
+                                    await streaming_callback["streamCallbacks"].on_data(json.dumps({
+                                        "Data": f"{selected_server} MCP server {tool_name} call result: {json.dumps(tool_call_result)}",
+                                        "Error": None,
+                                        "Status": True,
+                                        "StreamingStatus": "IN-PROGRESS",
+                                        "Action": "NOTIFICATION"
+                                    }))
+
+                            # Continue with the next iteration to get final response
+                            count += 1
+                            continue
+                        else:
+                            # Regular text response, return it
+                            result.Data["messages"].extend(response.Data.get("messages", []))
+                            result.Data["output_type"] = response.Data.get("output_type", "")
+                            result.Error = response.Error
+                            result.Status = response.Status
+
+                            for message in response.Data.get("messages", []):
+                                if streaming_callback and streaming_callback.get("is_stream"):
+                                    await streaming_callback["streamCallbacks"].on_data(json.dumps({
+                                        "Data": message,
+                                        "Error": None,
+                                        "Status": True,
+                                        "StreamingStatus": "IN-PROGRESS",
+                                        "Action": "MESSAGE"
+                                    }))
+                            return result
 
                     if streaming_callback and streaming_callback.get("is_stream"):
                         await streaming_callback["streamCallbacks"].on_data(json.dumps({
@@ -856,6 +917,9 @@ async def client_and_server_execution(payload: Dict[str, Any], streaming_callbac
         return result
 
     except Exception as e:
+        print(f"DEBUG: Exception in client_and_server_execution: {e}", flush=True)
+        import traceback
+        print(f"DEBUG: Traceback: {traceback.format_exc()}", flush=True)
         logging.error(f"Exception in client_and_server_execution: {e}")
         res = ClientAndServerExecutionResponse()
         res.Error = str(e)
@@ -869,7 +933,7 @@ def extract_data_from_response(message: Any) -> Dict[str, Any]:
     if not message:
         return {"isFunctionCall": False, "selectedTools": []}
 
-    content =message
+    content = message
     is_function_call = False
     selected_tools = []
 
@@ -883,6 +947,44 @@ def extract_data_from_response(message: Any) -> Dict[str, Any]:
             tools_str = content[start:end].strip()
             if tools_str.lower() != "none":
                 selected_tools = [tool.strip() for tool in tools_str.split(",")]
+
+    # Also check for tool_code format
+    if "```tool_code" in content:
+        is_function_call = True
+        start = content.find("```tool_code") + len("```tool_code")
+        end = content.find("```", start)
+        if start != -1 and end != -1:
+            tools_str = content[start:end].strip()
+            if tools_str.lower() != "none" and tools_str:
+                # Parse tool_code format - could be JSON, function calls, or simple names
+                import re
+                import json as json_lib
+
+                # Try to parse as JSON first
+                try:
+                    json_data = json_lib.loads(tools_str)
+                    if isinstance(json_data, dict):
+                        # Handle JSON format like {"tool_name": "mcp_joomla_categories", "action": "get_categories"}
+                        if "action" in json_data and json_data["action"] == "get_categories":
+                            selected_tools = ["get_joomla_categories"]
+                        else:
+                            selected_tools = [json_data.get("tool_name", "").replace("mcp_joomla_", "get_joomla_")]
+                    else:
+                        selected_tools = []
+                except (json_lib.JSONDecodeError, ValueError):
+                    # Not JSON, try function call patterns
+                    tool_matches = re.findall(r'mcp_joomla\.(\w+)\(\)', tools_str)
+                    if tool_matches:
+                        # Convert get_categories to get_joomla_categories
+                        selected_tools = [f"get_joomla_{match}" if not match.startswith("get_joomla_") else match for match in tool_matches]
+                    else:
+                        # Try general pattern for other servers
+                        tool_matches = re.findall(r'(\w+)\(\)', tools_str)
+                        if tool_matches:
+                            selected_tools = tool_matches
+                        else:
+                            # Fallback to comma-separated parsing
+                            selected_tools = [tool.strip() for tool in tools_str.split(",") if tool.strip()]
 
     return {
         "isFunctionCall": is_function_call,
@@ -915,14 +1017,28 @@ async def call_and_execute_tool(
         case "FACEBOOK_ADS_MCP":
             args["__credentials__"]   = creds
             args["server_credentials"] = creds
+        case "MCP-JOOMLA":
+            args["base_url"] = creds.get("base_url", "")
+            args["bearer_token"] = creds.get("bearer_token", "")
+        case "MOBILE-MCP-MAIN":
+            # Mobile MCP typically doesn't require credentials for basic operations
+            pass
+        case "EVENTBRITE-MCP-MAIN":
+            # Eventbrite requires API key
+            args["api_key"] = creds.get("api_key", "")
+        case "FEDORA-MCP-SERVER":
+            # Fedora MCP server typically doesn't require credentials for basic operations
+            pass
         case _:
             pass
 
     client = MCPServers[selected_server]
 
     try:
+        print(f"DEBUG: About to call tool '{tool_name}' on server '{selected_server}' with args: {args}", flush=True)
         # perform the tool call
         raw_result = await client.call_tool(tool_name, args)
+        print(f"DEBUG: Tool call completed, raw_result type: {type(raw_result)}", flush=True)
         
         # try to JSON-serialize it
         try:

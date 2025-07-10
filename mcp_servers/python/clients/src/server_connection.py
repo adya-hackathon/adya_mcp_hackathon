@@ -22,6 +22,10 @@ MCPServers: Dict[str, ClientSession] = {}
 
 async def initialize_all_mcp(exit_stack):
     """Initialize all MCP clients based on server configuration"""
+    if exit_stack is None:
+        exit_stack = AsyncExitStack()
+        await exit_stack.__aenter__()
+
     for server in ServersConfig:
         try:
             print(f"\n================= Initializing {server['server_name']} mcp server start ===============")
@@ -41,7 +45,16 @@ async def initialize_all_mcp(exit_stack):
                     print(f"Path exists        : {os.path.exists(absolute_path)}")
 
             # Start stdio client
-            server_params = StdioServerParameters(command=server["command"], args=server["args"])
+            # Prepare environment variables if specified
+            env_vars = server.get("env", {})
+            if env_vars:
+                # Merge with current environment
+                merged_env = {**os.environ, **env_vars}
+                server_params = StdioServerParameters(command=server["command"], args=server["args"], env=merged_env)
+                print(f"Environment vars   : {env_vars}")
+            else:
+                server_params = StdioServerParameters(command=server["command"], args=server["args"])
+
             stdio_transport = await exit_stack.enter_async_context(stdio_client(server_params))
             stdio, write = stdio_transport
 

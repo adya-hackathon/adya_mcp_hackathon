@@ -65,15 +65,28 @@ async def startup():
 @app.route("/api/v1/mcp/process_message", methods=["POST"])
 async def process_message():
     try:
+        print("🌟 ===== NEW REQUEST RECEIVED =====")
+        sys.stdout.flush()
+
         data = await request.get_json()
-        
+        print(f"🔍 DEBUG - Received request data keys: {list(data.keys()) if data else 'None'}")
+        print(f"🔍 DEBUG - Selected servers: {data.get('selected_servers', 'None')}")
+        print(f"🔍 DEBUG - Selected client: {data.get('selected_client', 'None')}")
+        sys.stdout.flush()
+
         # Set streaming to false
         if "client_details" in data:
             data["client_details"]["is_stream"] = False
-        
+
         # Validation check
+        print(f"🔍 DEBUG - Starting validation...")
+        sys.stdout.flush()
         validation_result = await client_and_server_validation(data, {"streamCallbacks": None, "is_stream": False})
+        print(f"🔍 DEBUG - Validation status: {validation_result.get('status', 'Unknown')}")
+        sys.stdout.flush()
         if not validation_result["status"]:
+            print(f"❌ DEBUG - Validation failed: {validation_result['error']}")
+            sys.stdout.flush()
             return jsonify({
                 "Data": None,
                 "Error": validation_result["error"],
@@ -81,14 +94,17 @@ async def process_message():
             }), 200
             
         print(f"\n✅ Validation Successful")
+        sys.stdout.flush()
         # print(validation_result)
         print(f"\n✅ Execution Started")
-        
+        sys.stdout.flush()
+
         # Execution
         generated_payload = validation_result["payload"]
         execution_response = await client_and_server_execution(generated_payload, {"streamCallbacks": None, "is_stream": False})
-        
+
         print(f"\n✅ Execution Completed")
+        sys.stdout.flush()
         response_dict = {
             "Data": execution_response.Data,
             "Error": execution_response.Error,
@@ -98,12 +114,20 @@ async def process_message():
     
     except Exception as error:
         print(f"Error ========>>>>> {error}")
+        sys.stdout.flush()
         return jsonify({
             "Data": None,
             "Error": str(error),
             "Status": False
         }), 500
 
+@app.route("/debug/servers", methods=["GET"])
+async def debug_servers():
+    return {
+        "available_servers": list(MCPServers.keys()),
+        "server_count": len(MCPServers),
+        "servers_detail": {name: {"tools": len(client.tools) if hasattr(client, 'tools') else 0} for name, client in MCPServers.items()}
+    }
 
 class CustomStreamHandler:
     def __init__(self, response_queue: asyncio.Queue):
@@ -282,9 +306,17 @@ async def shutdown():
         print("\n✅ MCP servers cleaned up on shutdown.\n")
     
 if __name__ == "__main__":
+    # Force output buffering off
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
+
+    print("🚀 STARTING MCP SERVER...")
+    print("🔧 Forcing output buffering off...")
+
     # Create a config instance
     config = Config()
-    # Configure bind address and port 
+    # Configure bind address and port
     config.bind = [f"0.0.0.0:5001"]
 
     # Print welcome banner

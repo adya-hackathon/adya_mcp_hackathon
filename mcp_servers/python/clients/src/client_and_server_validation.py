@@ -11,7 +11,14 @@ async def client_and_server_validation(payload: Dict[str, Any], streaming_callba
         selected_client = payload.get("selected_client", "")
         selected_servers = payload.get("selected_servers", [])
 
-        if not selected_client or not selected_servers or not selected_server_credentials or not client_details:
+        # Debug logging
+        print(f"DEBUG - selected_client: {selected_client}")
+        print(f"DEBUG - selected_servers: {selected_servers}")
+        print(f"DEBUG - selected_server_credentials: {selected_server_credentials}")
+        print(f"DEBUG - client_details keys: {list(client_details.keys()) if client_details else None}")
+
+        # Allow empty credentials for servers that don't require them (like CLI-MCP-SERVER)
+        if not selected_client or not selected_servers or selected_server_credentials is None or not client_details:
             print("Invalid Request Payload")
             return {
                 "payload": None,

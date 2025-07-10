@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "eventbrite": {
+      "command": "node",
+      "args": ["d:\\Projects\\EVENTBRITE\\eventbrite-mcp-main\\build\\index.js"],
+      "env": {
+        "EVENTBRITE_API_KEY": "YS7UGZ7LPD2MAFFBVMDI"
+      },
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
